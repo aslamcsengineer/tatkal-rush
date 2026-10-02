@@ -111,15 +111,26 @@ function App() {
 
     const timer = setInterval(() => {
       setSecondsLeft((current) => {
-        if (current <= 1) {
-          clearInterval(timer);
+      if (current <= 1) {
+  clearInterval(timer);
 
-          setTimeout(() => {
-            loadDashboard();
-          }, 1200);
+  setReservation((currentReservation) => ({
+    ...currentReservation,
+    status: "EXPIRED",
+  }));
 
-          return 0;
-        }
+  setMessage(
+    "Payment window expired. The temporary seat hold has been released and the seat is available for another passenger."
+  );
+
+  setMessageType("error");
+
+  setTimeout(() => {
+    loadDashboard();
+  }, 1200);
+
+  return 0;
+}
 
         return current - 1;
       });
@@ -171,18 +182,20 @@ function App() {
         );
 
         setMessage(
-          `Seat ${data.seat} successfully held. Complete payment before the timer expires.`
-        );
+  `Seat ${data.seat} successfully HELD. Your booking request acquired the available seat first. The seat is temporarily locked for you while payment is pending. Complete payment before the 30-second timer expires.`
+);
 
         setMessageType("success");
       } else {
-        setMessage(
-          data.message ||
-            "Tatkal seats are currently unavailable."
-        );
+  const reason =
+    data.status === "SOLD_OUT" ||
+    data.message?.toLowerCase().includes("sold")
+      ? "Booking not allocated. The available seat was already acquired and HELD by another concurrent request. No other seat is currently available. Your request was safely rejected to prevent double booking."
+      : data.message || "Tatkal seats are currently unavailable.";
 
-        setMessageType("error");
-      }
+  setMessage(reason);
+  setMessageType("error");
+}
 
       await loadDashboard();
     } catch (error) {
@@ -656,10 +669,13 @@ function App() {
                 <strong>
                   {seat.seat_number}
                 </strong>
-
-                <small>
-                  Tatkal Seat
-                </small>
+<small>
+  {seat.status === "HELD" &&
+  reservation?.status === "HELD" &&
+  reservation?.seat === seat.seat_number
+    ? `Payment hold • 00:${String(secondsLeft).padStart(2, "0")}`
+    : "Tatkal Seat"}
+</small>
               </div>
             ))}
           </div>
