@@ -43,9 +43,10 @@ async def auto_expire_worker():
                     result = await session.execute(
                         text("""
                             SELECT
-                                id,
-                                seat_id
-                            FROM reservations
+                            id,
+                            user_id,
+                            seat_id
+                        FROM reservations
                             WHERE status = 'HELD'
                               AND expires_at <= CURRENT_TIMESTAMP
                             FOR UPDATE SKIP LOCKED
@@ -81,6 +82,27 @@ async def auto_expire_worker():
                             {
                                 "seat_id":
                                     reservation["seat_id"]
+                            }
+                        )
+                        # ----------------------------------------
+                        # QUEUE -> EXPIRED
+                        # ----------------------------------------
+
+                        await session.execute(
+                            text("""
+                                UPDATE booking_requests
+                                SET status = 'EXPIRED'
+                                WHERE id = (
+                                    SELECT id
+                                    FROM booking_requests
+                                    WHERE user_id = :user_id
+                                      AND status = 'ALLOCATED'
+                                    ORDER BY id DESC
+                                    LIMIT 1
+                                )
+                            """),
+                            {
+                                "user_id": reservation["user_id"]
                             }
                         )
 
@@ -557,8 +579,6 @@ async def payment_success(
                     }
 
                 now = datetime.now()
-
-                # ----------------------------------------
                 # PAYMENT WINDOW EXPIRED
                 # ----------------------------------------
 
@@ -595,6 +615,27 @@ async def payment_success(
                                 ]
                         }
                     )
+                    # ----------------------------------------
+                    # QUEUE -> EXPIRED
+                    # ----------------------------------------
+
+                    await session.execute(
+                        text("""
+                            UPDATE booking_requests
+                            SET status = 'EXPIRED'
+                            WHERE id = (
+                                SELECT id
+                                FROM booking_requests
+                                WHERE user_id = :user_id
+                                  AND status = 'ALLOCATED'
+                                ORDER BY id DESC
+                                LIMIT 1
+                            )
+                        """),
+                        {
+                            "user_id": reservation["user_id"]
+                        }
+                    )
 
                     return {
                         "success": False,
@@ -606,6 +647,8 @@ async def payment_success(
                             ]
                     }
 
+                # ----------------------------------------
+       
                 # ----------------------------------------
                 # RESERVATION -> BOOKED
                 # ----------------------------------------
@@ -682,6 +725,26 @@ async def payment_success(
                 booking_id = (
                     booking_result
                     .scalar_one()
+                )                # ----------------------------------------
+                # QUEUE -> BOOKED
+                # ----------------------------------------
+
+                await session.execute(
+                    text("""
+                        UPDATE booking_requests
+                        SET status = 'BOOKED'
+                        WHERE id = (
+                            SELECT id
+                            FROM booking_requests
+                            WHERE user_id = :user_id
+                              AND status = 'ALLOCATED'
+                            ORDER BY id DESC
+                            LIMIT 1
+                        )
+                    """),
+                    {
+                        "user_id": reservation["user_id"]
+                    }
                 )
 
             return {
@@ -815,6 +878,27 @@ async def payment_failure(
                             reservation[
                                 "seat_id"
                             ]
+                    }
+                )
+                                # ----------------------------------------
+                # QUEUE -> REJECTED
+                # ----------------------------------------
+
+                await session.execute(
+                    text("""
+                        UPDATE booking_requests
+                        SET status = 'REJECTED'
+                        WHERE id = (
+                            SELECT id
+                            FROM booking_requests
+                            WHERE user_id = :user_id
+                              AND status = 'ALLOCATED'
+                            ORDER BY id DESC
+                            LIMIT 1
+                        )
+                    """),
+                    {
+                        "user_id": reservation["user_id"]
                     }
                 )
 
@@ -1080,20 +1164,32 @@ async def stats():
                             AS total_requests,
 
                         COUNT(*) FILTER (
-                            WHERE status =
-                                'WAITING'
+                            WHERE status = 'WAITING'
                         )
                             AS waiting,
 
                         COUNT(*) FILTER (
-                            WHERE status =
-                                'ALLOCATED'
+                            WHERE status = 'ALLOCATED'
                         )
                             AS allocated,
 
                         COUNT(*) FILTER (
-                            WHERE status =
-                                'SOLD_OUT'
+                            WHERE status = 'BOOKED'
+                        )
+                            AS booked,
+
+                        COUNT(*) FILTER (
+                            WHERE status = 'REJECTED'
+                        )
+                            AS rejected,
+
+                        COUNT(*) FILTER (
+                            WHERE status = 'EXPIRED'
+                        )
+                            AS expired,
+
+                        COUNT(*) FILTER (
+                            WHERE status = 'SOLD_OUT'
                         )
                             AS sold_out
 
